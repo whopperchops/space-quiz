@@ -75,6 +75,10 @@
     .primary:hover { filter: brightness(.95); transform: translateY(-1px); }
     .primary:disabled { background: var(--soft); color: var(--muted); cursor: default; filter: none; transform: none; }
     .hint { margin: 13px 0 0; text-align: center; font-size: 10px; color: var(--muted); }
+    .secondary { border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; background: var(--surface); color: var(--ink); cursor: pointer; }
+    .secondary:hover { background: var(--soft); }
+    .quiz-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; }
+    .feedback.skipped { background: var(--soft); color: var(--ink); }
     footer { display: flex; justify-content: center; gap: 8px; align-items: center; padding: 23px 0 0; color: var(--muted); font-size: 11px; }
     footer span { color: #8ca469; }
     .result { text-align: center; padding: 9px 0 4px; animation: reveal .4s ease; }
@@ -85,6 +89,21 @@
     .result-score span { font-size: 22px; letter-spacing: -1px; color: var(--muted); font-weight: 400; }
     .result-detail { background: var(--soft); border-radius: 12px; padding: 14px; margin-top: 20px; display: flex; justify-content: space-around; font-size: 11px; color: var(--muted); }
     .result-detail strong { display: block; font-size: 18px; color: var(--ink); margin-bottom: 4px; }
+    .best-score { margin: 14px 0; color: var(--muted); font-size: 12px; }
+    .result-actions { display: grid; gap: 10px; margin-top: 18px; }
+    .result-actions .primary { margin-top: 0; }
+    .copy-status { min-height: 1.5em; margin: 4px 0 0 !important; font-size: 12px !important; }
+    .copy-fallback { margin-top: 12px; text-align: left; }
+    .copy-fallback label { display: block; margin-bottom: 6px; color: var(--ink); font-size: 12px; font-weight: 600; }
+    .copy-fallback input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+    .copy-fallback p { margin: 6px 0 0; font-size: 12px; }
+    .review { margin-top: 14px; text-align: left; }
+    .review-toggle { width: 100%; text-align: center; }
+    .review-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+    .review-item { border: 1px solid var(--line); border-radius: 11px; padding: 12px; color: var(--ink); overflow-wrap: anywhere; }
+    .review-item h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.45; }
+    .review-item p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .review-item .review-status { color: var(--ink); font-weight: 650; }
     [hidden] { display: none !important; }
     @keyframes float { 50% { transform: translateY(-7px) rotate(4deg); } }
     @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
@@ -138,8 +157,12 @@
           <h2 id="question" tabindex="-1"></h2>
           <div id="answers" class="answers" aria-labelledby="question"></div>
           <div id="feedback" class="feedback" role="status" hidden></div>
-          <button id="next" class="primary" disabled><span>Next question</span><span aria-hidden="true">→</span></button>
+          <button id="next" class="primary" type="button" disabled><span>Next question</span><span aria-hidden="true">→</span></button>
           <p class="hint">Choose your answer to continue</p>
+          <div class="quiz-actions">
+            <button id="skip" class="secondary" type="button">Skip question</button>
+            <button id="restart-quiz" class="secondary" type="button">Restart quiz</button>
+          </div>
         </section>
         <section id="results" class="result" aria-labelledby="result-title" hidden>
           <div id="reaction" class="reaction" aria-hidden="true"></div>
@@ -149,7 +172,23 @@
           <div id="final-score" class="result-score"></div>
           <div class="eyebrow">Questions correct</div>
           <div class="result-detail"><div><strong id="accuracy"></strong>Accuracy</div><div><strong>10</strong>Discoveries made</div></div>
-          <button id="restart" class="primary"><span>Explore again</span><span aria-hidden="true">↻</span></button>
+          <p id="best-score" class="best-score" aria-live="polite"></p>
+          <div class="result-actions">
+            <button id="copy-result" class="secondary" type="button">Copy result</button>
+            <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+            <div id="copy-fallback" class="copy-fallback" hidden>
+              <label for="copy-text">Result summary</label>
+              <input id="copy-text" type="text" readonly>
+              <p>Select the summary and copy it manually.</p>
+            </div>
+            <button id="restart" class="primary" type="button"><span>Explore again</span><span aria-hidden="true">↻</span></button>
+          </div>
+          <div class="review">
+            <button id="review-toggle" class="secondary review-toggle" type="button" aria-expanded="false" aria-controls="answer-review">Review answers</button>
+            <div id="answer-review" hidden>
+              <ol id="review-list" class="review-list"></ol>
+            </div>
+          </div>
         </section>
       </div>
     </article>
@@ -169,9 +208,35 @@
       { category: "Our nearest star", question: "About how long does sunlight take to reach Earth?", answers: ["One second", "One hour", "Eight minutes", "One day"], correct: 2, fact: "Sunlight takes about 8 minutes and 20 seconds to travel the roughly 150 million kilometers to Earth." }
     ];
     const $ = (id) => document.getElementById(id);
+    const BEST_SCORE_KEY = "orbital-best-score";
     let index = 0;
     let score = 0;
     let answered = false;
+    let attemptQuestions = [];
+    let attemptAnswers = [];
+    let storageAvailable = true;
+
+    function loadBestScore() {
+      try {
+        const stored = window.localStorage.getItem(BEST_SCORE_KEY);
+        const value = stored === null ? null : Number(stored);
+        return Number.isInteger(value) && value >= 0 && value <= questions.length ? value : null;
+      } catch {
+        storageAvailable = false;
+        return null;
+      }
+    }
+
+    let bestScore = loadBestScore();
+
+    function shuffleQuestions() {
+      const shuffled = questions.slice();
+      for (let position = shuffled.length - 1; position > 0; position--) {
+        const other = Math.floor(Math.random() * (position + 1));
+        [shuffled[position], shuffled[other]] = [shuffled[other], shuffled[position]];
+      }
+      return shuffled;
+    }
 
     function updateProgress(completed) {
       document.querySelector(".fill").style.width = `${completed * 10}%`;
@@ -180,19 +245,21 @@
 
     function renderQuestion(focus = false) {
       answered = false;
-      const current = questions[index];
-      $("question-count").innerHTML = `Question <strong>${String(index + 1).padStart(2, "0")}</strong> / 10`;
+      const current = attemptQuestions[index];
+      $("question-count").innerHTML = `Question <strong>${String(index + 1).padStart(2, "0")}</strong> / ${questions.length}`;
       $("score").textContent = `${score} ${score === 1 ? "point" : "points"}`;
       $("category").textContent = current.category;
       $("question").textContent = current.question;
       $("feedback").hidden = true;
       $("feedback").textContent = "";
       $("next").disabled = true;
-      $("next").firstElementChild.textContent = index === 9 ? "See my results" : "Next question";
+      $("next").firstElementChild.textContent = index === questions.length - 1 ? "See my results" : "Next question";
       document.querySelector(".hint").textContent = "Choose your answer to continue";
+      $("skip").hidden = false;
       $("answers").replaceChildren();
       current.answers.forEach((text, choice) => {
         const button = document.createElement("button");
+        button.type = "button";
         button.className = "answer";
         const letter = document.createElement("span");
         letter.className = "letter";
@@ -208,15 +275,16 @@
       if (focus) $("question").focus();
     }
 
-    function selectAnswer(choice) {
+    function completeQuestion(choice, skipped = false) {
       if (answered) return;
       answered = true;
-      const current = questions[index];
-      const correct = choice === current.correct;
+      const current = attemptQuestions[index];
+      const correct = !skipped && choice === current.correct;
+      attemptAnswers[index] = { choice, correct, skipped };
       if (correct) score++;
       Array.from($("answers").children).forEach((button, position) => {
         button.disabled = true;
-        if (position === current.correct || (position === choice && !correct)) {
+        if (position === current.correct || (!skipped && position === choice && !correct)) {
           const isCorrect = position === current.correct;
           button.classList.add(isCorrect ? "correct" : "wrong");
           const mark = document.createElement("span");
@@ -228,22 +296,70 @@
         }
       });
       $("score").textContent = `${score} ${score === 1 ? "point" : "points"}`;
-      $("feedback").className = `feedback ${correct ? "good" : "bad"}`;
+      $("feedback").className = `feedback ${skipped ? "skipped" : correct ? "good" : "bad"}`;
       $("feedback").hidden = false;
-      $("feedback").textContent = `${correct ? "Nicely done!" : `Not quite. The answer is ${current.answers[current.correct]}.`} ${current.fact}`;
+      $("feedback").textContent = skipped
+        ? `Question skipped. The answer is ${current.answers[current.correct]}. ${current.fact}`
+        : `${correct ? "Nicely done!" : `Not quite. The answer is ${current.answers[current.correct]}.`} ${current.fact}`;
       updateProgress(index + 1);
+      $("skip").hidden = true;
       $("next").disabled = false;
       document.querySelector(".hint").textContent = "A little wiser. Ready for the next discovery?";
       $("next").focus();
     }
 
-    $("next").addEventListener("click", () => {
-      if (!answered) return;
-      if (index < questions.length - 1) {
-        index++;
-        renderQuestion(true);
-        return;
+    function selectAnswer(choice) {
+      completeQuestion(choice);
+    }
+
+    function skipQuestion() {
+      completeQuestion(null, true);
+    }
+
+    function updateBestScore() {
+      if (!storageAvailable) return;
+      try {
+        const stored = window.localStorage.getItem(BEST_SCORE_KEY);
+        const value = stored === null ? null : Number(stored);
+        const previous = Number.isInteger(value) && value >= 0 && value <= questions.length ? value : null;
+        bestScore = Math.max(score, previous ?? 0);
+        if (previous === null || score > previous) {
+          window.localStorage.setItem(BEST_SCORE_KEY, String(bestScore));
+        }
+      } catch {
+        storageAvailable = false;
       }
+    }
+
+    function renderAnswerReview() {
+      const list = $("review-list");
+      list.replaceChildren();
+      attemptQuestions.forEach((question, position) => {
+        const answer = attemptAnswers[position];
+        const item = document.createElement("li");
+        item.className = "review-item";
+        const heading = document.createElement("h3");
+        heading.textContent = `${position + 1}. ${question.question}`;
+        const selected = document.createElement("p");
+        selected.textContent = `Your answer: ${answer.skipped ? "Skipped" : question.answers[answer.choice]}`;
+        const status = document.createElement("p");
+        status.className = "review-status";
+        status.textContent = answer.skipped ? "Skipped — no point awarded" : answer.correct ? "Correct" : "Incorrect";
+        item.append(heading, selected, status);
+        if (!answer.correct) {
+          const correct = document.createElement("p");
+          correct.textContent = `Correct answer: ${question.answers[question.correct]}`;
+          item.append(correct);
+        }
+        const explanation = document.createElement("p");
+        explanation.textContent = question.fact;
+        item.append(explanation);
+        list.append(item);
+      });
+    }
+
+    function finishQuiz() {
+      updateBestScore();
       $("quiz").hidden = true;
       $("results").hidden = false;
       const tier = score >= 8 ? ["🚀", "Out of this world!", "You've got the makings of a cosmic explorer. The universe looks good on you."] :
@@ -252,19 +368,77 @@
       $("reaction").textContent = tier[0];
       $("result-title").textContent = tier[1];
       $("result-message").textContent = tier[2];
-      $("final-score").innerHTML = `${score}<span> / 10</span>`;
-      $("accuracy").textContent = `${score * 10}%`;
+      $("final-score").innerHTML = `${score}<span> / ${questions.length}</span>`;
+      $("accuracy").textContent = `${Math.round(score / questions.length * 100)}%`;
+      $("best-score").textContent = storageAvailable && bestScore !== null
+        ? `Best completed score on this device: ${bestScore} / ${questions.length}`
+        : "Best score could not be saved because local storage is unavailable in this browser.";
+      $("copy-status").textContent = "";
+      $("copy-fallback").hidden = true;
+      $("review-toggle").setAttribute("aria-expanded", "false");
+      $("review-toggle").textContent = "Review answers";
+      $("answer-review").hidden = true;
+      renderAnswerReview();
       $("result-title").focus();
-    });
+    }
 
-    $("restart").addEventListener("click", () => {
+    function resultSummary() {
+      const reaction = $("reaction").textContent;
+      return `Orbital space quiz: ${score}/${questions.length} ${reaction}`;
+    }
+
+    async function copyResult() {
+      const summary = resultSummary();
+      $("copy-fallback").hidden = true;
+      $("copy-status").textContent = "";
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+        await navigator.clipboard.writeText(summary);
+        $("copy-status").textContent = "Result copied to clipboard.";
+      } catch {
+        $("copy-text").value = summary;
+        $("copy-fallback").hidden = false;
+        $("copy-status").textContent = "Clipboard access failed. Select and copy the result summary below.";
+      }
+    }
+
+    function startAttempt(focus = false) {
       index = 0;
       score = 0;
+      attemptAnswers = Array(questions.length).fill(null);
+      attemptQuestions = shuffleQuestions();
       $("results").hidden = true;
       $("quiz").hidden = false;
-      renderQuestion(true);
+      $("copy-status").textContent = "";
+      $("copy-fallback").hidden = true;
+      renderQuestion(focus);
+    }
+
+    $("next").addEventListener("click", () => {
+      if (!answered) return;
+      if (index < attemptQuestions.length - 1) {
+        index++;
+        renderQuestion(true);
+        return;
+      }
+      finishQuiz();
     });
-    renderQuestion();
+
+    $("skip").addEventListener("click", skipQuestion);
+    $("restart-quiz").addEventListener("click", () => {
+      if (window.confirm("Restart this quiz? Your current progress will be lost.")) startAttempt(true);
+    });
+    $("copy-result").addEventListener("click", copyResult);
+    $("review-toggle").addEventListener("click", () => {
+      const expanded = $("review-toggle").getAttribute("aria-expanded") === "true";
+      $("review-toggle").setAttribute("aria-expanded", String(!expanded));
+      $("review-toggle").textContent = expanded ? "Review answers" : "Hide answer review";
+      $("answer-review").hidden = expanded;
+    });
+    $("restart").addEventListener("click", () => {
+      startAttempt(true);
+    });
+    startAttempt();
   </script>
 </body>
 </html>
