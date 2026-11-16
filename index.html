@@ -83,6 +83,7 @@
     .result p { color: var(--muted); font-size: 14px; line-height: 1.7; }
     .result-score { font-size: 56px; letter-spacing: -3px; font-weight: 700; margin: 19px 0 4px; color: var(--deep); }
     .result-score span { font-size: 22px; letter-spacing: -1px; color: var(--muted); font-weight: 400; }
+    .best-score { margin: 0 0 15px; font-size: 13px; color: var(--muted); }
     .result-detail { background: var(--soft); border-radius: 12px; padding: 14px; margin-top: 20px; display: flex; justify-content: space-around; font-size: 11px; color: var(--muted); }
     .result-detail strong { display: block; font-size: 18px; color: var(--ink); margin-bottom: 4px; }
     [hidden] { display: none !important; }
@@ -147,6 +148,7 @@
           <h2 id="result-title" tabindex="-1"></h2>
           <p id="result-message"></p>
           <div id="final-score" class="result-score"></div>
+          <p id="best-score" class="best-score" aria-live="polite"></p>
           <div class="eyebrow">Questions correct</div>
           <div class="result-detail"><div><strong id="accuracy"></strong>Accuracy</div><div><strong>10</strong>Discoveries made</div></div>
           <button id="restart" class="primary"><span>Explore again</span><span aria-hidden="true">↻</span></button>
@@ -172,6 +174,21 @@
     let index = 0;
     let score = 0;
     let answered = false;
+    const bestScoreKey = "orbital-best-score";
+    let bestScore = null;
+    let bestScoreStorageAvailable = true;
+
+    try {
+      const savedBestScore = localStorage.getItem(bestScoreKey);
+      if (savedBestScore !== null) {
+        const parsedBestScore = Number(savedBestScore);
+        if (Number.isInteger(parsedBestScore) && parsedBestScore >= 0 && parsedBestScore <= questions.length) {
+          bestScore = parsedBestScore;
+        }
+      }
+    } catch {
+      bestScoreStorageAvailable = false;
+    }
 
     function updateProgress(completed) {
       document.querySelector(".fill").style.width = `${completed * 10}%`;
@@ -254,6 +271,18 @@
       $("result-message").textContent = tier[2];
       $("final-score").innerHTML = `${score}<span> / 10</span>`;
       $("accuracy").textContent = `${score * 10}%`;
+      if (bestScoreStorageAvailable) {
+        bestScore = Math.max(bestScore ?? 0, score);
+        try {
+          localStorage.setItem(bestScoreKey, String(bestScore));
+          $("best-score").textContent = `Best completed score: ${bestScore} / 10`;
+        } catch {
+          bestScoreStorageAvailable = false;
+        }
+      }
+      if (!bestScoreStorageAvailable) {
+        $("best-score").textContent = "Best score couldn't be saved on this device.";
+      }
       $("result-title").focus();
     });
 
